@@ -1,0 +1,181 @@
+{
+    "image_gen_key": {
+        "type": "string",
+        "default": "",
+        "description": "OpenAI 兼容 API 密钥，必填",
+        "hint": "服务提供方给你的 OPENAI_API_KEY",
+        "obvious": true
+    },
+    "base_url": {
+        "type": "string",
+        "default": "",
+        "description": "OpenAI 兼容 API 地址（如 https://api.example.com）",
+        "hint": "服务提供方给你的 OPENAI_BASE_URL，不带 /v1 后缀",
+        "obvious": true
+    },
+    "image_style": {
+        "type": "string",
+        "default": "vertical",
+        "description": "默认风格",
+        "options": ["vertical", "comicDoujin", "r18", "lolita25d", "anime", "galgame", "custom"]
+    },
+    "image_size": {
+        "type": "string",
+        "default": "竖图",
+        "description": "默认尺寸",
+        "hint": "竖图 832×1216 / 横图 1216×832 / 方图 1024×1024",
+        "options": ["竖图", "横图", "方图"]
+    },
+    "seed": {
+        "type": "int",
+        "default": 0,
+        "description": "随机种子（0 = 随机）",
+        "hint": "设为 0 表示每次随机生成",
+        "min": 0
+    },
+    "quality": {
+        "type": "bool",
+        "default": true,
+        "description": "自动追加质量标签",
+        "hint": "开启后 API 会自动在 prompt 前后追加质量标签"
+    },
+    "uc_preset": {
+        "type": "string",
+        "default": "light",
+        "description": "UC 预设（负面提示词预设）",
+        "options": ["strong", "light", "furry_focus", "human_focus", "none"]
+    },
+    "variety_boost": {
+        "type": "bool",
+        "default": false,
+        "description": "Variety+ 开关",
+        "hint": "开启后增加生成多样性"
+    },
+    "cfg_rescale": {
+        "type": "float",
+        "default": 0,
+        "description": "Prompt Guidance Rescale (0-1)",
+        "hint": "0 表示不使用",
+        "min": 0,
+        "max": 1,
+        "step": 0.05
+    },
+    "artist_presets": {
+        "type": "list",
+        "default": [],
+        "description": "画师风格预设列表",
+        "hint": "格式: 风格名:画师串"
+    },
+    "enable_template": {
+        "type": "bool",
+        "default": true,
+        "description": "是否启用提示词模板（关闭后只使用原始提示词）"
+    },
+    "character_preset": {
+        "type": "string",
+        "default": "",
+        "description": "角色核心关键词与身体描述补全",
+        "hint": "如 muelsyse(Arknights), mechanical headwear。源请求已带角色信息时可留空"
+    },
+    "default_outfit": {
+        "type": "string",
+        "default": "",
+        "description": "默认服装（SD/NAI tag）。源自然语言没有具体服装时使用",
+        "hint": "例如：modern fashion, dark green knit dress, slim pants"
+    },
+    "outfit_cache_ttl_seconds": {
+        "type": "int",
+        "default": 3600,
+        "description": "服装缓存池持续时间（秒），0 = 关闭",
+        "hint": "源 prompt 提到换装时缓存新服装；超时回退默认服装",
+        "min": 0,
+        "max": 86400
+    },
+    "model": {
+        "type": "string",
+        "default": "nai-diffusion-4-5-full",
+        "description": "生图模型",
+        "hint": "与 API 文档常用模型一致，下拉选择",
+        "options": [
+            "nai-diffusion-4-5-full",
+            "nai-diffusion-4-5-curated",
+            "nai-diffusion-4-full"
+        ]
+    },
+    "steps": {
+        "type": "int",
+        "default": 28,
+        "description": "采样步数 (1-28)",
+        "min": 1,
+        "max": 28
+    },
+    "scale": {
+        "type": "float",
+        "default": 5,
+        "description": "Scale 提示词引导强度 (0-10)",
+        "min": 0,
+        "max": 10,
+        "step": 0.5
+    },
+    "sampler": {
+        "type": "string",
+        "default": "k_euler_ancestral",
+        "description": "采样器",
+        "options": [
+            "k_euler_ancestral",
+            "k_euler",
+            "k_dpm_2",
+            "k_dpm_2_ancestral",
+            "k_dpmpp_2m",
+            "k_dpmpp_2s_ancestral",
+            "k_dpmpp_sde",
+            "ddim"
+        ]
+    },
+    "noise_schedule": {
+        "type": "string",
+        "default": "karras",
+        "description": "噪声调度",
+        "options": ["karras", "exponential", "polyexponential"]
+    },
+    "negative": {
+        "type": "string",
+        "default": "",
+        "description": "自定义反向提示词，留空使用默认"
+    },
+    "proxy_port": {
+        "type": "int",
+        "default": 8969,
+        "description": "本地代理端口（陪伴插件通过此端口调用生图）",
+        "hint": "改完需要重载插件生效。默认 8969",
+        "min": 1024,
+        "max": 65535
+    },
+    "enable_translate": {
+        "type": "bool",
+        "default": false,
+        "description": "是否开启中间模型转译（建议小模型）",
+        "hint": "开启后先把自然语言译成 SD/NAI 标签再合并发送；失败回退原文"
+    },
+    "translate_provider": {
+        "type": "string",
+        "default": "",
+        "description": "提示词转译的模型供应商（留空用默认）",
+        "hint": "从 AstrBot 已配置的 provider 中选择，建议便宜快速的小模型",
+        "_special": "select_provider"
+    },
+    "enable_llm_tool": {
+        "type": "bool",
+        "default": false,
+        "description": "是否启用 NAI_Generate_Image LLM 工具",
+        "hint": "关闭后 LLM agent 无法调用此工具"
+    },
+    "max_tokens": {
+        "type": "int",
+        "default": 100000,
+        "description": "单次生图最大 token 预算（1 Anlas = 10000 tokens）",
+        "hint": "默认 100000 = 10 Anlas。费用超过此上限会返回 400",
+        "min": 10000,
+        "max": 1000000
+    }
+}

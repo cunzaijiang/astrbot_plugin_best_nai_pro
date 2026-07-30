@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>魔法绘图 · Studio</title>
+  <link rel="stylesheet" href="./studio.css?v=0.3.2" />
+</head>
+<body>
+  <div class="shell" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="./logo.jpg?v=0.3.2" alt="魔法绘图" width="32" height="32" />
+        <div class="brand-text">
+          <strong>Studio</strong>
+          <span>魔法绘图</span>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="pill" id="tokenPill" data-state="loading">KEY · · ·</span>
+        <span class="pill muted" id="endpointPill">—</span>
+      </div>
+      <div class="topbar-actions">
+        <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="生成模式">
+          <span class="mode-glider" id="modeGlider" aria-hidden="true"></span>
+          <button type="button" class="mode-btn active" data-mode="txt2img" role="tab" aria-selected="true">文生图</button>
+          <button type="button" class="mode-btn" data-mode="inpaint" role="tab" aria-selected="false">局部重绘</button>
+        </div>
+        <button type="button" class="ghost" id="resetBtn" title="重置参数">重置</button>
+        <button type="button" class="accent" id="generateBtn">
+          <span class="accent-label" id="generateLabel">生成</span>
+          <kbd>Ctrl↵</kbd>
+        </button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <section class="stage" aria-label="预览">
+        <div class="stage-frame" id="stageFrame">
+          <div class="stage-empty" id="emptyState">
+            <p class="stage-kicker">PREVIEW</p>
+            <h2>等待生成</h2>
+            <p class="stage-hint">在右侧填写提示词，或直接 Ctrl + Enter</p>
+          </div>
+
+          <div class="stage-loading hidden" id="loadingState">
+            <div class="orbit" aria-hidden="true"></div>
+            <p id="loadingText">转译并生成中…</p>
+          </div>
+
+          <div class="stage-error hidden" id="errorState">
+            <p class="err-title">生成失败</p>
+            <p class="err-msg" id="errorMsg"></p>
+            <button type="button" class="ghost" id="retryBtn">重试</button>
+          </div>
+
+          <figure class="stage-result hidden" id="resultWrap">
+            <div class="stage-image-box">
+              <img id="resultImage" alt="生成结果" />
+            </div>
+            <figcaption>
+              <span id="resultMeta">—</span>
+              <button type="button" class="link" id="downloadBtn">下载 PNG</button>
+            </figcaption>
+          </figure>
+
+          <!-- Trace 叠在舞台底部，不挤占主预览高度 -->
+          <aside class="trace hidden" id="mergeInfo">
+            <header>
+              <span>提示词轨迹</span>
+              <button type="button" class="link" id="toggleTrace">展开</button>
+            </header>
+            <ol id="mergeSteps" class="hidden"></ol>
+          </aside>
+        </div>
+      </section>
+
+      <aside class="dock" aria-label="参数">
+        <div class="dock-scroll">
+          <!-- 模式面板：文生图 / 局部重绘 切换动画 -->
+          <div class="mode-panels" id="modePanels" data-mode="txt2img">
+            <section class="mode-panel mode-panel-txt" data-panel="txt2img">
+              <section class="block" data-section="prompt" data-open="true">
+                <button type="button" class="block-head" aria-expanded="true">
+                  <span>提示词</span>
+                  <span class="chev" aria-hidden="true"></span>
+                </button>
+                <div class="block-body">
+                  <label class="field">
+                    <span>NAI 标签</span>
+                    <textarea id="naiPrompt" rows="4" placeholder="1girl, cherry blossom, soft light…"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>自然语言 <em>可选 · 自动转译</em></span>
+                    <textarea id="nlPrompt" rows="3" placeholder="白发少年靠在列车窗边，黄昏余晖洒在书页上…"></textarea>
+                  </label>
+                </div>
+              </section>
+
+              <section class="block" data-section="compose" data-open="true">
+                <button type="button" class="block-head" aria-expanded="true">
+                  <span>构图</span>
+                  <span class="chev" aria-hidden="true"></span>
+                </button>
+                <div class="block-body">
+                  <div class="seg" id="sizeSeg" role="radiogroup" aria-label="尺寸">
+                    <button type="button" class="seg-item active" data-value="竖图">竖图</button>
+                    <button type="button" class="seg-item" data-value="横图">横图</button>
+                    <button type="button" class="seg-item" data-value="方图">方图</button>
+                  </div>
+                  <input type="hidden" id="size" value="竖图" />
+
+                  <label class="field">
+                    <span>风格</span>
+                    <select id="style">
+                      <option value="vertical">条漫清新</option>
+                      <option value="comicDoujin">同人分镜</option>
+                      <option value="r18">半立体唯美</option>
+                      <option value="lolita25d">半立体幼态</option>
+                      <option value="anime">里番本格</option>
+                      <option value="galgame">视觉小说</option>
+                      <option value="custom">自定义</option>
+                    </select>
+                  </label>
+
+                  <label class="field hidden" id="customArtistsWrap">
+                    <span>自定义画师串</span>
+                    <textarea id="customArtists" rows="2" placeholder="masterpiece, artist:…"></textarea>
+                  </label>
+                </div>
+              </section>
+            </section>
+
+            <section class="mode-panel mode-panel-inpaint" data-panel="inpaint">
+              <section class="block" data-section="inpaint-source" data-open="true">
+                <button type="button" class="block-head" aria-expanded="true">
+                  <span>局部重绘</span>
+                  <span class="chev" aria-hidden="true"></span>
+                </button>
+                <div class="block-body">
+                  <p class="hint-line">白色区域将被重绘，黑色区域保留原图。非标准尺寸会先引导裁剪/缩放至 NAI 支持分辨率。</p>
+                  <div id="inpaintUploader" class="uploader">
+                    <div class="uploader-hero">上传原图</div>
+                    <div class="uploader-sub">点击或拖入 PNG/JPG · 标准 832×1216 / 1216×832 / 1024×1024，其它尺寸可裁剪适配</div>
+                    <input id="inpaintFile" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                  </div>
+
+                  <div id="inpaintEditorWrap" class="inpaint-editor hidden">
+                    <div class="mask-toolbar">
+                      <button type="button" class="tool-btn on" data-tool="brush" id="toolBrush">画笔</button>
+                      <button type="button" class="tool-btn" data-tool="eraser" id="toolEraser">橡皮</button>
+                      <button type="button" class="tool-btn" data-tool="lasso" id="toolLasso">套索</button>
+                      <button type="button" class="tool-btn" id="toolUndo">撤销</button>
+                      <button type="button" class="tool-btn" id="toolClear">清空</button>
+                      <button type="button" class="tool-btn danger" id="toolRemoveImage">移除图</button>
+                    </div>
+                    <label class="field brush-row">
+                      <span>笔刷 <em id="brushSizeLabel">30px</em></span>
+                      <input id="brushSize" type="range" min="5" max="120" step="1" value="30" />
+                    </label>
+                    <div class="mask-canvas-wrap">
+                      <canvas id="inpaintCanvas"></canvas>
+                    </div>
+                    <div class="inpaint-meta" id="inpaintMeta">—</div>
+                    <label class="field">
+                      <span>重绘强度 <em id="inpaintStrengthLabel">1.00</em></span>
+                      <input id="inpaintStrength" type="range" min="0.01" max="1" step="0.01" value="1" />
+                    </label>
+                    <label class="switch">
+                      <input id="inpaintInvert" type="checkbox" />
+                      <span>反转遮罩</span>
+                    </label>
+                  </div>
+                </div>
+              </section>
+
+              <section class="block" data-section="inpaint-prompt" data-open="true">
+                <button type="button" class="block-head" aria-expanded="true">
+                  <span>改图提示词</span>
+                  <span class="chev" aria-hidden="true"></span>
+                </button>
+                <div class="block-body">
+                  <label class="field">
+                    <span>NAI 标签 <em>描述要改的内容</em></span>
+                    <textarea id="inpaintNaiPrompt" rows="3" placeholder="red dress, looking at viewer…"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>自然语言 <em>可选 · 自动转译</em></span>
+                    <textarea id="inpaintNlPrompt" rows="2" placeholder="把裙子改成红色…"></textarea>
+                  </label>
+                  <p class="hint-line">局部重绘不拼接画师串 / 风格模板，提示词只描述改动区域。</p>
+                </div>
+              </section>
+            </section>
+          </div>
+
+          <section class="block" data-section="sample" data-open="false">
+            <button type="button" class="block-head" aria-expanded="false">
+              <span>采样</span>
+              <span class="chev" aria-hidden="true"></span>
+            </button>
+            <div class="block-body">
+              <div class="grid-2">
+                <label class="field">
+                  <span>采样器</span>
+                  <select id="sampler">
+                    <option value="k_euler_ancestral">Euler A</option>
+                    <option value="k_euler">Euler</option>
+                    <option value="k_dpm_2">DPM 2</option>
+                    <option value="k_dpm_2_ancestral">DPM 2 A</option>
+                    <option value="k_dpmpp_2m">DPM++ 2M</option>
+                    <option value="k_dpmpp_2s_ancestral">DPM++ 2S A</option>
+                    <option value="k_dpmpp_sde">DPM++ SDE</option>
+                    <option value="ddim">DDIM</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>噪声调度</span>
+                  <select id="noiseSchedule">
+                    <option value="karras">karras</option>
+                    <option value="exponential">exponential</option>
+                    <option value="polyexponential">polyexponential</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>步数 <em>1–28</em></span>
+                  <input id="steps" type="number" min="1" max="28" value="28" />
+                </label>
+                <label class="field">
+                  <span>引导强度 <em>0–10</em></span>
+                  <input id="scale" type="number" min="0" max="10" step="0.5" value="5" />
+                </label>
+                <label class="field">
+                  <span>种子 <em>0=随机</em></span>
+                  <input id="seed" type="number" min="0" value="0" />
+                </label>
+                <label class="field">
+                  <span>引导重缩放</span>
+                  <input id="cfgRescale" type="number" min="0" max="1" step="0.05" value="0" />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="block" data-section="model" data-open="false">
+            <button type="button" class="block-head" aria-expanded="false">
+              <span>模型与开关</span>
+              <span class="chev" aria-hidden="true"></span>
+            </button>
+            <div class="block-body">
+              <label class="field">
+                <span>模型</span>
+                <select id="model">
+                  <option value="nai-diffusion-4-5-full">nai-diffusion-4-5-full</option>
+                  <option value="nai-diffusion-4-5-curated">nai-diffusion-4-5-curated</option>
+                  <option value="nai-diffusion-4-full">nai-diffusion-4-full</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>负面预设</span>
+                <select id="ucPreset">
+                  <option value="light">light</option>
+                  <option value="strong">strong</option>
+                  <option value="furry_focus">furry_focus</option>
+                  <option value="human_focus">human_focus</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+              <div class="toggles">
+                <label class="switch">
+                  <input id="quality" type="checkbox" checked />
+                  <span>质量标签</span>
+                </label>
+                <label class="switch">
+                  <input id="varietyBoost" type="checkbox" />
+                  <span>多样性+</span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="block" data-section="negative" data-open="false">
+            <button type="button" class="block-head" aria-expanded="false">
+              <span>负面提示词</span>
+              <span class="chev" aria-hidden="true"></span>
+            </button>
+            <div class="block-body">
+              <label class="field">
+                <span>
+                  反向提示
+                  <button type="button" class="link inline" id="loadDefaultNegative">载入默认</button>
+                </span>
+                <textarea id="negative" rows="3" placeholder="留空使用插件默认负面词"></textarea>
+              </label>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script src="./studio.js?v=0.3.2"></script>
+</body>
+</html>
