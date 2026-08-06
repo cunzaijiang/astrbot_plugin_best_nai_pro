@@ -1,8 +1,8 @@
 name: astrbot_plugin_best_nai_pro
 display_name: 魔法绘图
-version: 0.3.2
+version: 0.3.5
 author: 存在酱
-description: 基于 OpenAI 兼容 API 的 NovelAI 生图插件（Studio 版）
+description: 基于 OpenAI 兼容 API 的 NovelAI 生图插件（Studio 版 + 提示词反推）
 desc: 魔法绘图 Studio
 repo: https://github.com/cunzaijiang/astrbot_plugin_best_nai_pro
 tags:

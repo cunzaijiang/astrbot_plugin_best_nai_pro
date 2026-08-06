@@ -1,5 +1,5 @@
 """
-AstrBot 魔法绘图插件 v0.3.2
+AstrBot 魔法绘图插件 v0.3.5
 
 功能：
 - 基于 OpenAI 兼容 API 的 NovelAI 文生图
@@ -7,10 +7,11 @@ AstrBot 魔法绘图插件 v0.3.2
 - 多风格 / 画师预设 / NSFW 开关
 - 本地 Images 代理（陪伴插件）
 - Studio Web 调试面板（文生图 / 局部重绘）
+- 提示词反推（/反推：三级降级 PNG 元数据 / LLM+Danbooru / LLM 视觉）
 
 作者: 存在酱
-版本: 0.3.2
-日期: 2026-07-30
+版本: 0.3.5
+日期: 2026-08-06
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from .core.constants import (
 )
 from .core.errors import format_generate_error
 from .core.parse import parse_args
+from .core.tag_extractor import TagExtractor
 from .services.generator import GenerateService
 from .services.proxy import LocalProxyServer
 from .services.translator import TranslateService
@@ -57,7 +59,7 @@ from .services.translator import TranslateService
     "astrbot_plugin_best_nai_pro",
     "存在酱",
     "基于 OpenAI 兼容 API 的 NovelAI 生图插件",
-    "0.3.2",
+    "0.3.5",
 )
 class NAIGenerateImagePlugin(Star):
     """魔法绘图 — AstrBot 插件入口。"""
@@ -127,6 +129,11 @@ class NAIGenerateImagePlugin(Star):
             self.proxy_port: int = int(config.get("proxy_port") or PROXY_PORT)
         except (TypeError, ValueError):
             self.proxy_port = PROXY_PORT
+
+        # ── 提示词反推（/反推）配置 ──
+        self.danbooru_api_url: str = (config.get("danbooru_api_url") or "").strip()
+        self.retag_provider: str = (config.get("retag_provider") or "").strip()
+        self.retag_show_source: bool = bool(config.get("retag_show_source", True))
 
         self._session: Optional[aiohttp.ClientSession] = None
         self.translator = TranslateService(
@@ -270,6 +277,119 @@ class NAIGenerateImagePlugin(Star):
             logger.info(f"{LOG_TAG} [persist_config] 已保存 | {key}={value}")
         except Exception as e:
             logger.warning(f"{LOG_TAG} [persist_config] 保存失败: {e!r}")
+
+    async def _get_image_bytes(self, event: AstrMessageEvent) -> Optional[bytes]:
+        """从消息事件中提取第一张图片的 bytes。
+
+        兼容本地文件路径和远程 URL，同时支持从引用消息（reply）中提取图片。
+        四级兜底：当前消息组件 -> message_obj.message -> 引用消息里的图 -> aiocqhttp CQ:image 原文。
+        """
+        import os as _os
+
+        async def _fetch_image_comp(comp) -> Optional[bytes]:
+            """从单个 Image 组件获取 bytes。"""
+            try:
+                # 优先用 convert_to_file_path（AstrBot 标准方式，自动处理 URL 下载和本地文件）
+                if hasattr(comp, "convert_to_file_path"):
+                    file_path = await comp.convert_to_file_path()
+                    if file_path and _os.path.isfile(file_path):
+                        with open(file_path, "rb") as f:
+                            return f.read()
+
+                # 备用：直接读 file/path 属性
+                file_path = getattr(comp, "file", None) or getattr(comp, "path", None)
+                if file_path and isinstance(file_path, str):
+                    file_path = file_path.replace("file://", "")
+                    if _os.path.isfile(file_path):
+                        with open(file_path, "rb") as f:
+                            return f.read()
+
+                # 备用：远程 URL
+                url = getattr(comp, "url", None)
+                if url and isinstance(url, str) and url.startswith("http"):
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as session:
+                        async with session.get(url) as resp:
+                            if resp.status == 200:
+                                return await resp.read()
+            except Exception as e:
+                logger.warning(f"{LOG_TAG} [retag] 获取图片组件失败: {e}")
+            return None
+
+        try:
+            # 获取完整消息链（event.get_messages() 比 event.message.chain 更可靠）
+            try:
+                full_chain = event.get_messages()
+            except Exception:
+                full_chain = getattr(event.message_obj, "message", None) or []
+
+            # 1. 当前消息的图片组件
+            for comp in full_chain:
+                if isinstance(comp, Img):
+                    data = await _fetch_image_comp(comp)
+                    if data:
+                        return data
+
+            # 2. 遍历 message_obj.message 作为补充
+            msg_obj_chain = (
+                getattr(getattr(event, "message_obj", None), "message", None) or []
+            )
+            for comp in msg_obj_chain:
+                if isinstance(comp, Img):
+                    data = await _fetch_image_comp(comp)
+                    if data:
+                        return data
+
+            # 3. 引用消息（reply）中的图片
+            try:
+                from astrbot.api.message_components import Reply as AstrReply
+
+                for chain in (full_chain, msg_obj_chain):
+                    for comp in chain:
+                        if isinstance(comp, AstrReply):
+                            inner_chain = (
+                                getattr(comp, "chain", None)
+                                or getattr(comp, "message", None)
+                                or []
+                            )
+                            if hasattr(inner_chain, "chain"):
+                                inner_chain = inner_chain.chain
+                            for inner_comp in (inner_chain or []):
+                                if isinstance(inner_comp, Img):
+                                    data = await _fetch_image_comp(inner_comp)
+                                    if data:
+                                        return data
+            except ImportError:
+                pass
+
+            # 4. aiocqhttp 原始事件中的图片（QQ 平台兜底）
+            try:
+                import re as _re
+
+                raw = getattr(event, "raw_message", None) or getattr(
+                    event, "_raw_event", None
+                )
+                if raw is None:
+                    msg_obj = getattr(event, "message_obj", None)
+                    raw = getattr(msg_obj, "raw_message", None) if msg_obj else None
+                if isinstance(raw, str):
+                    img_matches = _re.findall(r"\[CQ:image,[^\]]*url=([^,\]]+)", raw)
+                    for url in img_matches:
+                        url = url.strip()
+                        if url.startswith("http"):
+                            async with aiohttp.ClientSession(
+                                timeout=aiohttp.ClientTimeout(total=30)
+                            ) as session:
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        return await resp.read()
+            except Exception as e:
+                logger.debug(f"{LOG_TAG} [retag] 从原始事件提取图片失败: {e}")
+
+        except Exception as e:
+            logger.warning(f"{LOG_TAG} [retag] 获取图片失败: {e}")
+        return None
 
     async def _generate_one(
         self, prompt: str, style: str, size: str, session_key: str = ""
@@ -550,6 +670,178 @@ class NAIGenerateImagePlugin(Star):
             yield event.chain_result([Img.fromBytes(img_bytes)])
         else:
             yield event.plain_result(format_generate_error(reason))
+
+    def _resolve_retag_provider_id(self) -> Optional[str]:
+        """选出反推用的 provider ID（留空回退默认 provider）。"""
+        chosen = (self.retag_provider or "").strip()
+        try:
+            if chosen:
+                prov = self.context.get_provider_by_id(chosen)
+                if prov:
+                    return chosen
+                logger.warning(
+                    f"{LOG_TAG} [retag] provider '{chosen}' 不存在，回退默认"
+                )
+            prov = self.context.get_using_provider()
+            if prov is not None:
+                try:
+                    return prov.meta().id  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                cfg = getattr(prov, "provider_config", None)
+                if cfg and isinstance(cfg, dict):
+                    return cfg.get("id")
+            return None
+        except Exception as e:
+            logger.warning(f"{LOG_TAG} [retag] 选择 provider 异常: {e!r}")
+            return None
+
+    async def _retag_llm_chat(
+        self, mode: str, image_bytes: bytes, prompt: str
+    ) -> Optional[str]:
+        """反推 LLM 回调：封装 context.llm_generate，支持图片输入。
+
+        Args:
+            mode: "describe"（输出中文描述）| "tags"（直接输出 Danbooru tag）
+            image_bytes: 图片字节
+            prompt: 发给 LLM 的 user 文本
+
+        Returns:
+            LLM 文本响应；provider 未配置或调用失败返回 None（触发降级）
+        """
+        pid = self._resolve_retag_provider_id()
+        if not pid:
+            logger.warning(f"{LOG_TAG} [retag] 无可用 provider，LLM 视觉跳过")
+            return None
+
+        from .core.tag_extractor import _VISION_DESC_PROMPT, _VISION_SYSTEM_PROMPT
+
+        system_prompt = (
+            _VISION_DESC_PROMPT if mode == "describe" else _VISION_SYSTEM_PROMPT
+        )
+
+        # image_bytes 写临时文件，llm_generate 的 image_urls 支持本地路径
+        import os as _os
+        import tempfile as _tempfile
+
+        tmp_path = ""
+        try:
+            suffix = ".png" if image_bytes[:4] == b"\x89PNG" else ".jpg"
+            fd, tmp_path = _tempfile.mkstemp(suffix=suffix, prefix="retag_")
+            with _os.fdopen(fd, "wb") as f:
+                f.write(image_bytes)
+
+            kwargs: dict = {"image_urls": [tmp_path]}
+
+            logger.info(
+                f"{LOG_TAG} [retag] LLM 调用 | provider='{pid}' mode={mode} "
+                f"img={len(image_bytes)}B"
+            )
+            response = await self.context.llm_generate(
+                chat_provider_id=pid,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                **kwargs,
+            )
+            text = getattr(response, "completion_text", "") or ""
+            if not text and hasattr(response, "result_chain") and response.result_chain:
+                buf = []
+                for comp in response.result_chain:
+                    txt = getattr(comp, "text", None)
+                    if txt:
+                        buf.append(txt)
+                text = "".join(buf)
+            return text.strip() if text else None
+        except Exception as e:
+            logger.warning(f"{LOG_TAG} [retag] LLM 调用失败: {e!r}")
+            return None
+        finally:
+            if tmp_path:
+                try:
+                    _os.remove(tmp_path)
+                except Exception:
+                    pass
+
+    @filter.command("反推")
+    async def cmd_retag(self, event: AstrMessageEvent):
+        """提示词反推：从图片自动反推 Danbooru 风格的 NAI 提示词。
+
+        用法：
+            回复一张图片并发送 /反推
+            或者在发图时同时发送 /反推
+
+        反推策略（自动三级降级）：
+            1. 📦 PNG 元数据  - 最快最准，仅 AI 生成图有
+            2. 🔍 LLM 描述 + Danbooru API 检索 - 需配置 danbooru_api_url + 反推 provider
+            3. 🤖 LLM 视觉识别 - 需配置反推 provider（retag_provider）
+        """
+        image_bytes = await self._get_image_bytes(event)
+        if not image_bytes:
+            try:
+                full_chain = event.get_messages()
+            except Exception:
+                full_chain = getattr(event.message_obj, "message", None) or []
+            chain2 = (
+                getattr(getattr(event, "message_obj", None), "message", None) or []
+            )
+            logger.warning(
+                f"{LOG_TAG} [retag] 未找到图片 | "
+                f"get_messages 类型={[type(c).__name__ for c in full_chain]} | "
+                f"message_obj.message 类型={[type(c).__name__ for c in chain2]} | "
+                f"raw_message={str(getattr(event, 'raw_message', getattr(getattr(event, 'message_obj', None), 'raw_message', None)))[:200]}"
+            )
+            yield event.plain_result(
+                "❌ 未检测到图片\n"
+                "请回复一张图片并发送 /反推，或同时发图和指令"
+            )
+            return
+
+        yield event.plain_result("🔍 正在反推 tag，请稍候...")
+
+        extractor = TagExtractor(
+            danbooru_api_url=self.danbooru_api_url,
+            llm_chat=self._retag_llm_chat,
+        )
+
+        result = await extractor.extract(image_bytes)
+
+        if result.source == "failed" or not result.prompt:
+            yield event.plain_result(
+                "❌ 反推失败\n"
+                "元数据：未找到\n"
+                "Danbooru API："
+                + ("未配置" if not self.danbooru_api_url else "无结果")
+                + "\nLLM 视觉："
+                + (
+                    "未配置反推 provider（retag_provider）"
+                    if not self._resolve_retag_provider_id()
+                    else "无结果"
+                )
+                + "\n\n提示：\n"
+                "· 配置 danbooru_api_url 启用语义检索\n"
+                "· 配置 retag_provider（选一个支持视觉的 LLM 供应商）启用 LLM 视觉识别"
+            )
+            return
+
+        # 来源标签
+        source_labels = {
+            "metadata": "📦 PNG 元数据",
+            "danbooru_api": "🔍 LLM 描述 + Danbooru 检索",
+            "llm": "🤖 LLM 视觉识别",
+        }
+        source_label = source_labels.get(result.source, result.source)
+
+        lines = []
+        if self.retag_show_source:
+            lines.append(f"来源：{source_label}")
+        lines.append(f"\n✅ 正向 Prompt（共 {len(result.tags)} 个 tag）：")
+        lines.append(result.prompt)
+        if result.negative_prompt:
+            lines.append("\n❌ 负向 Prompt：")
+            lines.append(result.negative_prompt)
+        lines.append("\n💡 可直接用于 /nai <prompt>")
+
+        yield event.plain_result("\n".join(lines))
 
     @filter.llm_tool()
     async def NAI_Generate_Image(

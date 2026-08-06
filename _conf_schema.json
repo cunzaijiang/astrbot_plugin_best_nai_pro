@@ -177,5 +177,23 @@
         "hint": "默认 100000 = 10 Anlas。费用超过此上限会返回 400",
         "min": 10000,
         "max": 1000000
+    },
+    "danbooru_api_url": {
+        "type": "string",
+        "default": "",
+        "description": "Danbooru 反推 API 地址（可选）",
+        "hint": "用于 /反推 的 DanbooruSearchOnline API，如 https://xxx.hf.space；留空则跳过该级"
+    },
+    "retag_provider": {
+        "type": "string",
+        "default": "",
+        "description": "反推用的视觉 LLM 供应商（可选）",
+        "hint": "从 AstrBot 已配置的 provider 中选一个支持视觉的（如 OpenAI gpt-4o / Gemini）；留空用默认 provider",
+        "_special": "select_provider"
+    },
+    "retag_show_source": {
+        "type": "bool",
+        "default": true,
+        "description": "反推结果是否显示来源标签"
     }
 }
